@@ -27,6 +27,7 @@ class AbstractChosen
     @enable_split_word_search = if @options.enable_split_word_search? then @options.enable_split_word_search else true
     @group_search = if @options.group_search? then @options.group_search else true
     @search_contains = @options.search_contains || false
+    @search_fuzzy = @options.search_fuzzy || false
     @single_backstroke_delete = if @options.single_backstroke_delete? then @options.single_backstroke_delete else true
     @max_selected_options = @options.max_selected_options || Infinity
     @inherit_select_classes = @options.inherit_select_classes || false
@@ -166,7 +167,7 @@ class AbstractChosen
 
     query = this.get_search_text()
     escapedQuery = query.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")
-    regex = this.get_search_regex(escapedQuery)
+    regex = this.get_search_regex(query)
 
     for option in @results_data
 
@@ -196,11 +197,14 @@ class AbstractChosen
 
           if option.search_match
             if query.length
-              startpos = search_match.index
-              prefix = text.slice(0, startpos)
-              fix    = text.slice(startpos, startpos + query.length)
-              suffix = text.slice(startpos + query.length)
-              option.highlighted_html = "#{this.escape_html(prefix)}<em>#{this.escape_html(fix)}</em>#{this.escape_html(suffix)}"
+              if @search_fuzzy
+                option.highlighted_html = this.highlight_search_result(regex, escapedQuery, option.highlighted_html, query)
+              else
+                startpos = search_match.index
+                prefix = text.slice(0, startpos)
+                fix    = text.slice(startpos, startpos + query.length)
+                suffix = text.slice(startpos + query.length)
+                option.highlighted_html = "#{this.escape_html(prefix)}<em>#{this.escape_html(fix)}</em>#{this.escape_html(suffix)}"
 
             results_group.group_match = true if results_group?
 
@@ -216,11 +220,50 @@ class AbstractChosen
       this.update_results_content this.results_option_build()
       this.winnow_results_set_highlight()
 
+  highlight_search_result: (regex, zregex, value, search) ->
+    if @search_fuzzy
+      search_text = []
+
+      tokens = search.split(' ').sort (a, b) ->
+        b.length - a.length
+
+      search_string = value.split ' '
+
+      for string in search_string
+        for token in tokens
+          if string.indexOf('<em>') == -1 && string.indexOf('</em>') == -1
+            string = string.replace(new RegExp('(' + token.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&") + ')', 'gi'), '<em>$1</em>')
+        search_text.push string
+
+      result = search_text.join ' '
+    else
+      startpos = value.search zregex
+      text = value.substr(0, startpos + search.length) + '</em>' + value.substr(startpos + search.length)
+      result = text.substr(0, startpos) + '<em>' + text.substr(startpos)
+
+    result
+
+  get_tokenized_regex_string: (text) ->
+    regex_tokens = []
+    tokens = this.get_tokenized_search_string text
+
+    for text in tokens
+      text = text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&")
+      regex_tokens.push "(?=.*" + text + ")"
+
+    regex_tokens.join ''
+
+  get_tokenized_search_string: (text) ->
+    text.split ' '
+
   get_search_regex: (escaped_search_string) ->
-    regex_string = if @search_contains then escaped_search_string else "(^|\\s|\\b)#{escaped_search_string}[^\\s]*"
-    regex_string = "^#{regex_string}" unless @enable_split_word_search or @search_contains
-    regex_flag = if @case_sensitive_search then "" else "i"
-    new RegExp(regex_string, regex_flag)
+    if @search_fuzzy
+      new RegExp(this.get_tokenized_regex_string(escaped_search_string), 'i')
+    else
+      regex_string = if @search_contains then escaped_search_string else "(^|\\s|\\b)#{escaped_search_string}[^\\s]*"
+      regex_string = "^#{regex_string}" unless @enable_split_word_search or @search_contains
+      regex_flag = if @case_sensitive_search then "" else "i"
+      new RegExp(regex_string, regex_flag)
 
   search_string_match: (search_string, regex) ->
     match = regex.exec(search_string)
@@ -332,12 +375,12 @@ class AbstractChosen
   get_single_html: ->
     """
       <a class="chosen-single chosen-default">
+        <input class="chosen-search-input" type="text" autocomplete="off" />
         <span>#{@default_text}</span>
         <div><b></b></div>
       </a>
       <div class="chosen-drop">
         <div class="chosen-search">
-          <input class="chosen-search-input" type="text" autocomplete="off" />
         </div>
         <ul class="chosen-results"></ul>
       </div>
